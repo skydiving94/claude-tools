@@ -38,6 +38,9 @@ skl show <skill> [--parsed]    print the usage block verbatim; --parsed prints w
 skl remove <skill>             drop an imported skill from the store
 skl doctor                     check claude CLI, sign-in, store, and index
 skl completion zsh|bash        print the completion script
+skl help [<command>]           the command list, or usage and description of one command
+skl --help                     same as `skl help`; so does plain `skl`
+skl --version                  print `skl <version>`
 skl <skill> <action> [<target>] [options] [--print | --app]
 ```
 

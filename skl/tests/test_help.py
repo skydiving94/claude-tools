@@ -12,6 +12,21 @@ class HelpTests(SklCase):
         r = self.run_cli("sync")
         self.assertEqual(r.returncode, 0, r.stderr)
 
+    # version
+    def test_version(self):
+        for flag in ("--version", "-V"):
+            r = self.run_cli(flag)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertRegex(r.stdout, r"^skl \d+\.\d+\.\d+\n$")
+            self.assertEqual(r.stdout, "skl " + skl.__version__ + "\n")
+            self.assertEqual(r.stderr, "")
+
+    def test_version_only_when_sole_argument(self):
+        self.sync_notes()
+        r = self.run_cli("notes", "list", "--version")
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("unknown flag '--version'", r.stderr)
+
     # top-level help
     def test_top_level_help_identical(self):
         outs = []

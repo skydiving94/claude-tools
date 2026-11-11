@@ -29,9 +29,11 @@ skl notes add Hello --tag x       # run; TAB completes skills, actions and flags
 skl notes add Hello --print       # claude -p "/notes add Hello"
 skl notes add Hello --app         # open claude.ai/new?q=... in the browser
 skl doctor                        # check claude CLI, sign-in, store, roots
+skl --help                        # commands, run options, environment, indexed skills
+skl --version                     # skl 0.1.0
 ```
 
-Other commands: `show <skill> [--parsed]`, `remove <skill>`, `run <skill> ...` (for a skill named like a built-in). Bad input fails with exit code 2 and no model call, for example `skl notes list --bogus` prints `error: unknown flag '--bogus'`. `--help` prints the skill's usage block. If a skill defines its own `--print` or `--app`, the skill's flag wins and `skl`'s own are `--skl-print` and `--skl-app`.
+Other commands: `help [<command>]`, `show <skill> [--parsed]`, `remove <skill>`, `run <skill> ...` (for a skill named like a built-in). Bad input fails with exit code 2 and no model call, for example `skl notes list --bogus` prints `error: unknown flag '--bogus'`. `skl --help` (or plain `skl`) lists the commands; `skl help <command>` or `skl <command> --help` explains one. After a skill name, `--help` prints the skill's usage block. If a skill defines its own `--print` or `--app`, the skill's flag wins and `skl`'s own are `--skl-print` and `--skl-app`.
 
 ## How it finds skills
 

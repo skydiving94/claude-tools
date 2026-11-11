@@ -903,6 +903,9 @@ def main(argv):
     try:
         if argv and argv[0] == "__complete":
             return cmd_complete(argv[1:])
+        if argv in (["--version"], ["-V"]):
+            _out("skl %s" % __version__)
+            return 0
         if not argv or argv in (["--help"], ["-h"]):
             sys.stdout.write(_help_screen())
             return 0
