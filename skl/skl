@@ -426,7 +426,9 @@ def get_entry(index, name):
         return skills[name]
     msg = "unknown skill '%s'" % name
     close = difflib.get_close_matches(name, list(skills), n=3)
-    if close:
+    if not skills:
+        msg += "\nrun 'skl sync' to index your skills"
+    elif close:
         msg += "\ndid you mean: %s" % ", ".join(close)
     raise UsageError(msg)
 
@@ -673,14 +675,16 @@ def cmd_doctor(args):
     signin = "not confirmed (run `claude` once to sign in)"
     if claude:
         try:
-            r = subprocess.run(["claude", "--version"], capture_output=True, text=True, timeout=10)
+            r = subprocess.run(["claude", "--version"], capture_output=True, text=True, timeout=10,
+                               stdin=subprocess.DEVNULL)
             lines = r.stdout.strip().splitlines()
             if lines:
                 version = lines[0]
         except (OSError, subprocess.SubprocessError, ValueError):
             pass
         try:
-            r = subprocess.run(["claude", "auth", "status"], capture_output=True, timeout=10)
+            r = subprocess.run(["claude", "auth", "status"], capture_output=True, timeout=10,
+                               stdin=subprocess.DEVNULL)
             if r.returncode == 0:
                 signin = "ok"
         except (OSError, subprocess.SubprocessError):

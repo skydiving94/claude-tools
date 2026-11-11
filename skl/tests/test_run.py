@@ -127,6 +127,31 @@ class RunTests(SklCase):
         self.assertEqual(code, 1)
         self.assertEqual(err.getvalue(), "error: Permission denied\n")
 
+    def test_doctor_closes_stdin_for_claude(self):
+        self.make_stub("claude")
+        real = skl.subprocess.run
+        calls = []
+
+        def spy(*a, **kw):
+            calls.append(kw)
+            return real(*a, **kw)
+
+        with mock.patch.dict(os.environ, self.env), \
+                mock.patch.object(skl.subprocess, "run", side_effect=spy), \
+                mock.patch.object(skl.sys, "stdout", io.StringIO()):
+            skl.main(["doctor"])
+        self.assertEqual(len(calls), 2)
+        for kw in calls:
+            self.assertIs(kw.get("stdin"), skl.subprocess.DEVNULL)
+
+    def test_unknown_skill_with_empty_index_hints_sync(self):
+        r = self.run_cli("remove", "notes")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        r = self.run_cli("notes", "list")
+        self.assertEqual(r.returncode, 2)
+        self.assertEqual(r.stderr.splitlines(), ["error: unknown skill 'notes'",
+                                                 "run 'skl sync' to index your skills"])
+
     def test_ctrl_c_returns_130_without_traceback(self):
         err = io.StringIO()
         with mock.patch.dict(os.environ, self.env), \
