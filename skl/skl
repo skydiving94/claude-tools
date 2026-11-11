@@ -721,8 +721,48 @@ def cmd_complete(args):
     return 0
 
 
+BASH_COMPLETION = """\
+# skl completion for bash
+_skl_complete() {
+  local line
+  COMPREPLY=()
+  while IFS= read -r line; do
+    [ -n "$line" ] && COMPREPLY+=("${line%%$'\\t'*}")
+  done < <(skl __complete -- "${COMP_WORDS[@]:1:COMP_CWORD}" 2>/dev/null)
+}
+complete -o default -F _skl_complete skl
+"""
+
+ZSH_COMPLETION = """\
+#compdef skl
+_skl() {
+  local -a out cands
+  local line name desc
+  out=("${(@f)$(skl __complete -- "${(@)words[2,CURRENT]}" 2>/dev/null)}")
+  for line in $out; do
+    [[ -z $line ]] && continue
+    name=${line%%$'\\t'*}
+    desc=""
+    [[ $line == *$'\\t'* ]] && desc=${line#*$'\\t'}
+    name=${name//:/\\\\:}
+    if [[ -n $desc ]]; then cands+=("$name:$desc"); else cands+=("$name"); fi
+  done
+  if (( ${#cands} )); then _describe -t skl 'skl' cands; else _files; fi
+}
+if [[ $funcstack[1] == _skl ]]; then _skl "$@"; else compdef _skl skl; fi
+"""
+
+
+def cmd_completion(args):
+    if len(args) != 1 or args[0] not in ("bash", "zsh"):
+        raise UsageError("choose zsh or bash")
+    sys.stdout.write(BASH_COMPLETION if args[0] == "bash" else ZSH_COMPLETION)
+    return 0
+
+
 _COMMANDS = {"sync": cmd_sync, "import": cmd_import, "list": cmd_list,
-             "show": cmd_show, "remove": cmd_remove, "doctor": cmd_doctor, "run": cmd_run}
+             "show": cmd_show, "remove": cmd_remove, "doctor": cmd_doctor, "run": cmd_run,
+             "completion": cmd_completion}
 
 
 def main(argv):
