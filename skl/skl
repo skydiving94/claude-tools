@@ -433,7 +433,10 @@ def cmd_sync(args):
                 continue
             name = entry["name"]
             old = skills.get(name)
-            if old is not None and (name in seen or old.get("source") == "import"):
+            if old is not None and old.get("source") == "import" and name not in seen:
+                _out("note: %s ignored, imported %s kept" % (path, name))
+                continue
+            if old is not None and name in seen:
                 _out("note: %s from %s replaces %s" % (name, path, old["source_path"]))
             _write_store(name, data)
             skills[name] = entry

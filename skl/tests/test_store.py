@@ -58,12 +58,18 @@ class StoreTests(SklCase):
         r = self.run_cli("sync", env={**self.env, "SKL_SKILL_PATH": str(extra)})
         self.assertIn("2 skills indexed", r.stdout)
 
-    def test_import_clash_replaced_by_sync(self):
+    def test_import_survives_synced_clash(self):
         self.run_cli("import", str(FIXTURES / "notes" / "SKILL.md"))
-        self.put_skill(self.home_skills, "notes")
+        src = self.put_skill(self.home_skills, "notes")
         r = self.run_cli("sync")
-        self.assertIn("note: notes from", r.stdout)
+        self.assertIn("note: %s ignored, imported notes kept" % src, r.stdout)
         self.assertTrue(r.stdout.rstrip().endswith("1 skills indexed"))
+        index = json.loads((Path(self.env["XDG_DATA_HOME"]) / "skl" / "index.json").read_text())
+        self.assertEqual(index["skills"]["notes"]["source"], "import")
+        src.unlink()
+        r = self.run_cli("sync")
+        self.assertNotIn("removed", r.stdout)
+        self.assertIn("notes", self.run_cli("list").stdout)
 
     def test_passthrough(self):
         d = self.home_skills / "odd"; d.mkdir(parents=True)
