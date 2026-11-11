@@ -1,5 +1,9 @@
+import io
+import os
 import unittest
+from contextlib import redirect_stderr
 from pathlib import Path
+from unittest import mock
 
 from helpers import SklCase, load_skl
 
@@ -99,6 +103,16 @@ class RunTests(SklCase):
         self.assertEqual(r.returncode, 0)
         self.assertIn("sign-in: ok", r.stdout)
         self.assertIn("skills: 1 indexed (0 pass-through)", r.stdout)
+
+    def test_ctrl_c_returns_130_without_traceback(self):
+        self.make_stub("claude")
+        err = io.StringIO()
+        with mock.patch.dict(os.environ, self.env), \
+                mock.patch.object(skl.subprocess, "call", side_effect=KeyboardInterrupt), \
+                redirect_stderr(err):
+            code = skl.main(["notes", "list"])
+        self.assertEqual(code, 130)
+        self.assertNotIn("Traceback", err.getvalue())
 
 
 if __name__ == "__main__":

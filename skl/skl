@@ -664,6 +664,8 @@ def main(argv):
             sys.stderr.write("error: unknown command\n")
             return 2
         return cmd_run(argv)
+    except KeyboardInterrupt:
+        return 130
     except UsageError as e:
         sys.stderr.write("error: %s\n" % e)
         return 2
