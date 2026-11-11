@@ -14,6 +14,8 @@ import zipfile
 import zlib
 from pathlib import Path
 
+__version__ = "0.1.0"
+
 
 class SklError(Exception):
     """General failure: exit 1, printed as 'error: <msg>'."""
@@ -271,7 +273,33 @@ def validate(entry, args):
 
 _NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 _MAX_SKILL_BYTES = 1024 * 1024
-_BUILTINS = ("sync", "import", "list", "show", "remove", "doctor", "completion", "run")
+
+# Every built-in command: (name, usage, one-line summary, description).
+# _BUILTINS, the help screen, per-command help and completion all derive from it.
+_COMMANDS_HELP = (
+    ("sync", "sync", "Index skills from Claude Code's skill folders",
+     "Scans the skill folders and refreshes the index. Imported skills are kept."),
+    ("import", "import <path>", "Add a .skill archive, a SKILL.md, or a skill folder",
+     "Copies a skill that has a command interface block into the store and indexes it."),
+    ("list", "list", "List indexed skills and their actions",
+     "Prints one line per indexed skill: its name and actions."),
+    ("show", "show <skill> [--parsed]", "Print a skill's usage block",
+     "Prints the skill's usage block verbatim.\n\n"
+     "Options:\n  --parsed   Print what skl understood of the usage block, as JSON"),
+    ("remove", "remove <skill>", "Drop a skill from the index",
+     "Removes the skill and its stored copy from the index."),
+    ("doctor", "doctor", "Check the claude CLI, sign-in and the index",
+     "Reports whether the claude CLI is found and signed in, and the state of the store, roots and index."),
+    ("completion", "completion <zsh|bash>", "Print the shell completion script",
+     "Prints the completion script for your shell. Load it from your profile."),
+    ("run", "run <skill> [args]", "Run a skill whose name matches a command",
+     "Runs a skill by name, for a skill named like a built-in command.\n\n"
+     "Options:\n  --print   Run non-interactively (claude -p) and print the result\n"
+     "  --app     Open claude.ai in the browser with the command filled in"),
+    ("help", "help [<command>]", "Show this help, or help for one command",
+     "Shows the command list, or the usage and description of one command."),
+)
+_BUILTINS = tuple(c[0] for c in _COMMANDS_HELP)
 
 
 def store_dir():
@@ -625,6 +653,57 @@ def app_url(command):
     return "https://claude.ai/new?q=" + urllib.parse.quote(command, safe="")
 
 
+_HELP_HINT = "run 'skl help' to see the commands"
+_HELP_FLAGS = ("--help", "-h")
+
+
+def _help_screen():
+    try:
+        skills = load_index()["skills"]
+    except Exception:
+        skills = {}
+    lines = ["skl %s - run command-style Claude skills from your shell" % __version__, "",
+             "Usage:", "  skl <command> [args]",
+             "  skl <skill> <action> [<target>] [options] [--print | --app]", "", "Commands:"]
+    lines += ["  %-23s %s" % (usage, summary) for _n, usage, summary, _d in _COMMANDS_HELP]
+    lines += ["", "Run options:",
+              "  --print      Run non-interactively (claude -p) and print the result",
+              "  --app        Open claude.ai in the browser with the command filled in",
+              "  --help, -h   Show help (after a skill name: that skill's usage block)",
+              "  --version    Show the version", "",
+              "Environment:",
+              "  SKL_SKILL_PATH   Extra skill folders to scan (separated like PATH)",
+              "  XDG_DATA_HOME    Where skl keeps its index (default ~/.local/share)", "",
+              "Indexed skills:"]
+    if skills:
+        width = max(len(n) for n in skills) + 3
+        for name in sorted(skills):
+            try:
+                lines.append("  %s%s" % (name.ljust(width), _describe(skills[name])))
+            except Exception:
+                lines.append("  %s" % name)
+    else:
+        lines.append("  none indexed, run 'skl sync'")
+    return "\n".join(lines) + "\n"
+
+
+def _command_help(name):
+    for cname, usage, _summary, description in _COMMANDS_HELP:
+        if cname == name:
+            return "usage: skl %s\n\n%s\n" % (usage, description)
+    raise UsageError("unknown command '%s'\n%s" % (name, _HELP_HINT))
+
+
+def cmd_help(args):
+    if not args:
+        sys.stdout.write(_help_screen())
+    elif len(args) == 1:
+        sys.stdout.write(_command_help("help" if args[0] in _HELP_FLAGS else args[0]))
+    else:
+        raise UsageError("usage: skl help [<command>]")
+    return 0
+
+
 def cmd_run(args):
     if not args:
         raise UsageError("usage: skl run <skill> [args...]")
@@ -743,6 +822,8 @@ def complete(index, words):
     if len(words) == 1:
         return _filter(cur, [(b, "") for b in _BUILTINS] + [(n, "") for n in sorted(skills)])
     first = words[0]
+    if first == "help":
+        return _filter(cur, [(b, "") for b in _BUILTINS]) if len(words) == 2 else []
     if first in ("show", "remove", "run") and len(words) == 2:
         return _filter(cur, [(n, "") for n in sorted(skills)])
     if first == "completion":
@@ -815,18 +896,25 @@ def cmd_completion(args):
 
 _COMMANDS = {"sync": cmd_sync, "import": cmd_import, "list": cmd_list,
              "show": cmd_show, "remove": cmd_remove, "doctor": cmd_doctor, "run": cmd_run,
-             "completion": cmd_completion}
+             "completion": cmd_completion, "help": cmd_help}
 
 
 def main(argv):
     try:
         if argv and argv[0] == "__complete":
             return cmd_complete(argv[1:])
-        if argv and argv[0] in _COMMANDS:
-            return _COMMANDS[argv[0]](argv[1:])
-        if not argv or argv[0] in _BUILTINS:
-            sys.stderr.write("error: unknown command\n")
-            return 2
+        if not argv or argv in (["--help"], ["-h"]):
+            sys.stdout.write(_help_screen())
+            return 0
+        if argv[0] in _COMMANDS:
+            rest = argv[1:]
+            # 'run <skill> ... --help' belongs to the skill; only a bare 'run --help' is run's help.
+            wants_help = (rest[0] in _HELP_FLAGS if argv[0] == "run" and len(rest) == 1
+                          else argv[0] != "run" and any(a in _HELP_FLAGS for a in rest))
+            if wants_help and argv[0] != "help":
+                sys.stdout.write(_command_help(argv[0]))
+                return 0
+            return _COMMANDS[argv[0]](rest)
         return cmd_run(argv)
     except KeyboardInterrupt:
         return 130
