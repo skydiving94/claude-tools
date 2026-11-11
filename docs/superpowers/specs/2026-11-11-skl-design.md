@@ -1,6 +1,6 @@
 # skl: design
 
-Date: 2026-11-11. Status: awaiting review.
+Date: 2026-11-11. Status: implemented (see skl/README.md).
 
 ## Purpose
 
@@ -50,7 +50,7 @@ Store: `${XDG_DATA_HOME:-~/.local/share}/skl/`.
 - `skills/<name>/SKILL.md`: a copy of each indexed skill, so the index survives changes to the source folders.
 - `index.json`: one entry per skill with `name`, `source` (`sync` or `import`), `source_path`, `usage_block` (verbatim), and the parsed interface.
 
-`skl sync` scans, in order, `~/.claude/skills/**/SKILL.md` and `./.claude/skills/**/SKILL.md` (current directory up to the git root), plus any directories in `SKL_SKILL_PATH`. It keeps skills that have a `## Command interface` heading, refreshes their copies, and removes `sync` entries whose source is gone. Imported entries are never removed by `sync`. On a name clash the later source wins and `sync` prints a note.
+`skl sync` scans, in order, `~/.claude/skills/**/SKILL.md` and `./.claude/skills/**/SKILL.md` (current directory up to the git root), plus any directories in `SKL_SKILL_PATH`. It keeps skills that have a `## Command interface` heading, refreshes their copies, and removes `sync` entries whose source is gone. Imported entries are never removed by `sync`. Between two synced skills with the same name the later source wins; a synced skill never replaces an imported one. `sync` prints a note either way.
 
 `skl import` accepts a `.skill` zip, a `SKILL.md`, or a folder. A skill without a command interface block is refused with an error. Archive members are extracted only if their resolved path stays inside the destination.
 
@@ -83,8 +83,8 @@ Requirements stated only in prose, such as "`duplicate` also requires `--as`", a
 
 The command sent to Claude is `/<skill> <args>` with the user's arguments re-quoted so values with spaces survive.
 
-- Default: `claude "/<skill> <args>"`, an interactive session in the terminal with the command already submitted.
-- `--print`: `claude -p "/<skill> <args>"`, non-interactive, output to stdout, exit code passed through.
+- Default: `claude "/<skill> <args>"`, an interactive session in the terminal with the command already submitted. `skl` replaces itself with `claude` (exec), so the terminal belongs to `claude` and Ctrl-C reaches it directly.
+- `--print`: `claude -p "/<skill> <args>"`, non-interactive, output to stdout. Also an exec, so the exit code passes through unchanged.
 - `--app`: open `https://claude.ai/new?q=<url-encoded command>` with `open` (macOS) or `xdg-open` (Linux). The user presses send. If neither opener exists, print the URL.
 
 `--print` and `--app` are `skl` flags and are stripped before validation. A skill that defines its own flag with either name wins; the `skl` flag is then given as `--skl-print` or `--skl-app`.
@@ -92,6 +92,8 @@ The command sent to Claude is `/<skill> <args>` with the user's arguments re-quo
 `skl` has no login. The terminal modes use whichever account the `claude` CLI is signed in to. `--app` uses whichever account the browser is signed in to, and the skill must exist in that account.
 
 ## Completion
+
+zsh users load completion with `source <(skl completion zsh)`; bash users with `eval "$(skl completion bash)"`, because `source <(...)` does nothing in bash 3.2.
 
 The completion files are thin. They call `skl __complete -- <words so far>` and offer the lines it prints. `__complete` reads `index.json` only, so it stays fast.
 

@@ -1,12 +1,17 @@
 name: skl
 
+permissions:
+  contents: read
+
 on:
   push:
     paths:
       - "skl/**"
+      - ".github/workflows/skl.yml"
   pull_request:
     paths:
       - "skl/**"
+      - ".github/workflows/skl.yml"
 
 jobs:
   test:
@@ -27,7 +32,7 @@ jobs:
           python-version: ${{ matrix.python }}
       - name: Install zsh
         if: runner.os == 'Linux'
-        run: sudo apt-get install -y zsh
+        run: sudo apt-get update && sudo apt-get install -y zsh
       - name: Run tests
         working-directory: skl
         run: python3 -m unittest discover -s tests -v
