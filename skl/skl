@@ -279,7 +279,33 @@ def store_dir():
     return Path(base) / "skl"
 
 
-def load_index():
+def _valid_interface(iface):
+    if iface is None:
+        return True
+    if not isinstance(iface, dict) or not all(k in iface for k in ("usage_line", "actions", "groups")):
+        return False
+    if not isinstance(iface["actions"], dict) or not isinstance(iface["groups"], list):
+        return False
+    if not all(isinstance(a, dict) and isinstance(a.get("targets"), list)
+               for a in iface["actions"].values()):
+        return False
+    return all(isinstance(g, dict) and isinstance(g.get("flags"), list) for g in iface["groups"])
+
+
+def _valid_entry(key, entry):
+    return (isinstance(key, str) and _NAME_RE.fullmatch(key) is not None
+            and isinstance(entry, dict)
+            and isinstance(entry.get("name"), str) and _NAME_RE.fullmatch(entry["name"]) is not None
+            and isinstance(entry.get("usage_block"), str)
+            and entry.get("source") in ("sync", "import")
+            and _valid_interface(entry.get("interface", False)))
+
+
+def load_index(dropped=None):
+    """Load the index, silently dropping invalid entries.
+
+    If a list is passed as `dropped`, the keys of dropped entries are appended to it.
+    """
     path = store_dir() / "index.json"
     try:
         text = path.read_text(encoding="utf-8")
@@ -293,6 +319,13 @@ def load_index():
         raise SklError("index is unreadable, run 'skl sync'")
     if not isinstance(data, dict) or not isinstance(data.get("skills"), dict):
         raise SklError("index is unreadable, run 'skl sync'")
+    good = {}
+    for key, entry in data["skills"].items():
+        if _valid_entry(key, entry):
+            good[key] = entry
+        elif dropped is not None:
+            dropped.append(key)
+    data["skills"] = good
     return data
 
 
@@ -411,18 +444,27 @@ def _describe(entry):
 def cmd_sync(args):
     if args:
         raise UsageError("sync takes no arguments")
+    dropped = []
     try:
-        index = load_index()
+        index = load_index(dropped)
     except SklError:
         sys.stderr.write("note: index was unreadable, rebuilding it\n")
         index = {"version": 1, "skills": {}}
+    for key in dropped:
+        _out("note: dropped invalid index entry %s" % key)
     skills = index["skills"]
     seen = set()
     for root in scan_roots(Path.cwd()):
         for path in sorted(root.rglob("SKILL.md")):
+            if not path.is_file():
+                continue
             try:
-                entry = make_entry(path, "sync")
-                data = path.read_bytes()
+                with open(str(path), "rb") as f:
+                    data = f.read(_MAX_SKILL_BYTES + 1)
+                if len(data) > _MAX_SKILL_BYTES:
+                    sys.stderr.write("skipped %s: too large\n" % path)
+                    continue
+                entry = _entry_from_bytes(data, path.parent.name, "sync", path)
             except NoInterfaceError:
                 continue
             except SklError as e:
@@ -437,7 +479,7 @@ def cmd_sync(args):
                 _out("note: %s ignored, imported %s kept" % (path, name))
                 continue
             if old is not None and name in seen:
-                _out("note: %s from %s replaces %s" % (name, path, old["source_path"]))
+                _out("note: %s from %s replaces %s" % (name, path, old.get("source_path")))
             _write_store(name, data)
             skills[name] = entry
             seen.add(name)

@@ -1,8 +1,11 @@
 import json
+import os
+import subprocess
+import sys
 import zipfile
 from pathlib import Path
 
-from helpers import FIXTURES, SklCase, load_skl
+from helpers import FIXTURES, SKL_PATH, SklCase, load_skl
 
 skl = load_skl()
 NOTES = (FIXTURES / "notes" / "SKILL.md").read_text()
@@ -142,3 +145,55 @@ class StoreTests(SklCase):
             self.assertIsNone(skl._NAME_RE.fullmatch(bad), bad)
         for good in ("notes", "a.b-c_d", "A1"):
             self.assertIsNotNone(skl._NAME_RE.fullmatch(good), good)
+
+
+class BoundedSyncTests(SklCase):
+    def setUp(self):
+        super().setUp()
+        self.skills = Path(self.env["HOME"]) / ".claude" / "skills"
+
+    def sync(self):
+        return subprocess.run([sys.executable, str(SKL_PATH), "sync"], capture_output=True, text=True,
+                              cwd=str(self.tmp / "work"), env=self.env, timeout=10)
+
+    def test_special_files_skipped(self):
+        d = self.skills / "zero"; d.mkdir(parents=True)
+        os.symlink("/dev/zero", str(d / "SKILL.md"))
+        f = self.skills / "fifo"; f.mkdir()
+        os.mkfifo(str(f / "SKILL.md"))
+        self.put_skill(self.skills, "notes")
+        r = self.sync()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("Traceback", r.stderr)
+        self.assertTrue(r.stdout.rstrip().endswith("1 skills indexed"))
+
+    def test_oversized_skill_skipped(self):
+        d = self.skills / "big"; d.mkdir(parents=True)
+        (d / "SKILL.md").write_text(NOTES.replace("name: notes", "name: big") + "x" * (2 * 1024 * 1024))
+        r = self.sync()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("big/SKILL.md: too large", r.stderr)
+        self.assertTrue(r.stdout.rstrip().endswith("0 skills indexed"))
+
+    def test_invalid_index_entries_dropped(self):
+        self.put_skill(self.skills, "notes")
+        self.assertEqual(self.run_cli("sync").returncode, 0)
+        ipath = Path(self.env["XDG_DATA_HOME"]) / "skl" / "index.json"
+        index = json.loads(ipath.read_text())
+        good = index["skills"]["notes"]
+        index["skills"]["junk"] = "not a dict"
+        index["skills"]["nointerface"] = {k: v for k, v in good.items() if k != "interface"}
+        index["skills"]["../x"] = dict(good, name="x")
+        index["skills"]["badsrc"] = dict(good, name="badsrc", source="other")
+        ipath.write_text(json.dumps(index))
+        for args in (["list"], ["notes", "list", "--app"], ["__complete", "--", "notes", ""],
+                     ["__complete", "--", ""]):
+            r = self.run_cli(*args)
+            self.assertNotIn("Traceback", r.stderr, args)
+            self.assertEqual(r.stderr.count("note:"), 0, args)
+        self.assertEqual(self.run_cli("list").stdout.splitlines(), ["notes\tadd, show, list"])
+        r = self.run_cli("sync")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        for key in ("junk", "nointerface", "../x", "badsrc"):
+            self.assertIn("note: dropped invalid index entry %s" % key, r.stdout)
+        self.assertEqual(sorted(json.loads(ipath.read_text())["skills"]), ["notes"])
