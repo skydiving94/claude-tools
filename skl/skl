@@ -212,6 +212,61 @@ def all_flag_names(interface):
     return {n for g in interface["groups"] for f in g["flags"] for n in f["names"]}
 
 
+_NEGATIVE_NUMBER_RE = re.compile(r"^-\d+(\.\d+)?$")
+
+
+def _is_flag_arg(arg):
+    return arg.startswith("-") and arg != "-" and not _NEGATIVE_NUMBER_RE.match(arg)
+
+
+def validate(entry, args):
+    interface = entry.get("interface")
+    if interface is None:
+        return
+    usage = interface["usage_line"]
+
+    def fail(msg):
+        raise UsageError(msg, usage)
+
+    actions = interface["actions"]
+    if not args or _is_flag_arg(args[0]):
+        fail("missing action")
+    action = args[0]
+    if action not in actions:
+        fail("unknown action '%s'" % action)
+    targets = actions[action]["targets"]
+    valid = flags_for(interface, action)
+    known = all_flag_names(interface)
+    positionals = 0
+    i = 1
+    while i < len(args):
+        arg = args[i]
+        i += 1
+        if not _is_flag_arg(arg):
+            if positionals >= len(targets):
+                if arg in actions:
+                    fail("second action '%s'" % arg)
+                fail("unexpected argument '%s'" % arg)
+            positionals += 1
+            continue
+        name, eq, _value = arg.partition("=")
+        if name not in known:
+            fail("unknown flag '%s'" % name)
+        flag = next((f for f in valid if name in f["names"]), None)
+        if flag is None:
+            fail("flag '%s' is not valid for '%s'" % (name, action))
+        if flag["takes_value"]:
+            if not eq:
+                if i >= len(args):
+                    fail("flag '%s' needs a value" % name)
+                i += 1
+        elif eq:
+            fail("flag '%s' takes no value" % name)
+    for index, target in enumerate(targets):
+        if target["required"] and index >= positionals:
+            fail("missing %s for '%s'" % (target["name"], action))
+
+
 _NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 _MAX_SKILL_BYTES = 1024 * 1024
 _BUILTINS = ("sync", "import", "list", "show", "remove", "doctor", "completion", "run")
