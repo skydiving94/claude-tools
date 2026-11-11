@@ -113,3 +113,26 @@ class StoreTests(SklCase):
         self.assertIn("no skills indexed", self.run_cli("list").stdout)
         (Path(self.env["XDG_DATA_HOME"]) / "skl" / "index.json").write_text("{broken")
         r = self.run_cli("list"); self.assertEqual(r.returncode, 1); self.assertIn("run 'skl sync'", r.stderr); self.assertNotIn("Traceback", r.stderr)
+
+    def test_corrupt_and_oversized_zip(self):
+        z = Path(self.tmp) / "bad.skill"
+        with zipfile.ZipFile(z, "w", zipfile.ZIP_STORED) as zf:
+            zf.writestr("notes/SKILL.md", NOTES)
+        raw = bytearray(z.read_bytes())
+        raw[raw.index(b"Fixture skill")] ^= 0xFF
+        z.write_bytes(bytes(raw))
+        r = self.run_cli("import", str(z))
+        self.assertEqual(r.returncode, 1); self.assertTrue(r.stderr.startswith("error: "), r.stderr)
+        self.assertNotIn("Traceback", r.stderr)
+        big = Path(self.tmp) / "big.zip"
+        with zipfile.ZipFile(big, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr("notes/SKILL.md", NOTES + "x" * (2 * 1024 * 1024))
+        r = self.run_cli("import", str(big))
+        self.assertEqual(r.returncode, 1); self.assertTrue(r.stderr.startswith("error: "), r.stderr)
+        self.assertNotIn("Traceback", r.stderr)
+
+    def test_name_regex(self):
+        for bad in ("a\n", "a b", "../x", "a/b", "a:b"):
+            self.assertIsNone(skl._NAME_RE.fullmatch(bad), bad)
+        for good in ("notes", "a.b-c_d", "A1"):
+            self.assertIsNotNone(skl._NAME_RE.fullmatch(good), good)

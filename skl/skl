@@ -9,6 +9,7 @@ import shutil
 import sys
 import tempfile
 import zipfile
+import zlib
 from pathlib import Path
 
 
@@ -79,7 +80,7 @@ def frontmatter_name(skill_md):
 
 def _parse_action_line(line):
     words = line.split()
-    if not words or not _ACTION_NAME_RE.match(words[0]):
+    if not words or not _ACTION_NAME_RE.fullmatch(words[0]):
         return None
     targets = []
     i = 1
@@ -212,6 +213,7 @@ def all_flag_names(interface):
 
 
 _NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+_MAX_SKILL_BYTES = 1024 * 1024
 _BUILTINS = ("sync", "import", "list", "show", "remove", "doctor", "completion", "run")
 
 
@@ -255,7 +257,7 @@ def save_index(index):
 
 
 def _skill_folder(name):
-    if not _NAME_RE.match(name):
+    if not _NAME_RE.fullmatch(name):
         raise SklError("unsafe skill name '%s'" % name)
     return store_dir() / "skills" / name
 
@@ -274,7 +276,7 @@ def _entry_from_bytes(data, fallback_name, source, source_path):
         usage = (interface or {}).get("usage_line") or ""
         first = usage.split()[0].lstrip("/") if usage.split() else ""
         name = first or fallback_name
-    if not _NAME_RE.match(name or ""):
+    if not _NAME_RE.fullmatch(name or ""):
         raise SklError("unsafe skill name '%s'" % name)
     return {"name": name, "source": source, "source_path": str(source_path),
             "usage_block": block, "interface": interface}
@@ -406,20 +408,25 @@ def _read_skill_source(p):
         except zipfile.BadZipFile:
             raise SklError("not a valid zip file: %s" % p)
         with zf:
-            names = zf.namelist()
-            member = None
-            if "SKILL.md" in names:
-                member = "SKILL.md"
-            else:
-                for n in names:
-                    parts = n.split("/")
-                    if len(parts) == 2 and parts[1] == "SKILL.md" and parts[0] not in ("", ".", ".."):
-                        member = n
-                        break
-            if member is None:
-                raise SklError("no SKILL.md in %s" % p)
-            fallback = member.split("/")[0] if "/" in member else p.stem
-            return zf.read(member), fallback
+            try:
+                names = zf.namelist()
+                member = None
+                if "SKILL.md" in names:
+                    member = "SKILL.md"
+                else:
+                    for n in names:
+                        parts = n.split("/")
+                        if len(parts) == 2 and parts[1] == "SKILL.md" and parts[0] not in ("", ".", ".."):
+                            member = n
+                            break
+                if member is None:
+                    raise SklError("no SKILL.md in %s" % p)
+                if zf.getinfo(member).file_size > _MAX_SKILL_BYTES:
+                    raise SklError("SKILL.md in %s is too large" % p)
+                fallback = member.split("/")[0] if "/" in member else p.stem
+                return zf.read(member), fallback
+            except (zipfile.BadZipFile, zlib.error, RuntimeError, NotImplementedError, EOFError) as e:
+                raise SklError("cannot read %s: %s" % (p, e))
     return p.read_bytes(), p.resolve().parent.name
 
 
