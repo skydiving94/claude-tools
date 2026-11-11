@@ -104,16 +104,37 @@ class RunTests(SklCase):
         self.assertIn("sign-in: ok", r.stdout)
         self.assertIn("skills: 1 indexed (0 pass-through)", r.stdout)
 
-    def test_ctrl_c_returns_130_without_traceback(self):
+    def run_main_with_exec(self, argv):
+        self.make_stub("claude")
+        with mock.patch.dict(os.environ, self.env), \
+                mock.patch.object(skl.os, "execvp") as ex:
+            code = skl.main(argv)
+        return code, ex
+
+    def test_terminal_and_print_exec_claude(self):
+        code, ex = self.run_main_with_exec(["notes", "add", "My note"])
+        ex.assert_called_once_with("claude", ["claude", '/notes add "My note"'])
+        code, ex = self.run_main_with_exec(["notes", "list", "--print"])
+        ex.assert_called_once_with("claude", ["claude", "-p", "/notes list"])
+
+    def test_exec_failure_reports_error(self):
         self.make_stub("claude")
         err = io.StringIO()
         with mock.patch.dict(os.environ, self.env), \
-                mock.patch.object(skl.subprocess, "call", side_effect=KeyboardInterrupt), \
+                mock.patch.object(skl.os, "execvp", side_effect=OSError(13, "Permission denied")), \
                 redirect_stderr(err):
             code = skl.main(["notes", "list"])
+        self.assertEqual(code, 1)
+        self.assertEqual(err.getvalue(), "error: Permission denied\n")
+
+    def test_ctrl_c_returns_130_without_traceback(self):
+        err = io.StringIO()
+        with mock.patch.dict(os.environ, self.env), \
+                mock.patch.object(skl, "load_index", side_effect=KeyboardInterrupt), \
+                redirect_stderr(err):
+            code = skl.main(["list"])
         self.assertEqual(code, 130)
         self.assertNotIn("Traceback", err.getvalue())
-
 
 if __name__ == "__main__":
     unittest.main()

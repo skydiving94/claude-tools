@@ -610,9 +610,13 @@ def cmd_run(args):
         return 127
     sys.stdout.flush()
     sys.stderr.flush()
-    if mode == "print":
-        return subprocess.call(["claude", "-p", command])
-    return subprocess.call(["claude", command])
+    argv = ["claude", "-p", command] if mode == "print" else ["claude", command]
+    try:
+        os.execvp("claude", argv)
+    except OSError as e:
+        sys.stderr.write("error: %s\n" % (e.strerror or e))
+        return 1
+    return 0
 
 
 def cmd_doctor(args):
