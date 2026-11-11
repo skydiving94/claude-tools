@@ -90,6 +90,61 @@ def _parse_action_line(line):
     return words[0], {"targets": targets, "description": rest.strip()}
 
 
+_GROUP_RE = re.compile(r"^\s*([A-Za-z][^:]*?):\s*(.*)$")
+_FLAG_RE = re.compile(r"^--?[A-Za-z][A-Za-z0-9-]*$")
+_CHOICE_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+_TOKEN_RE = re.compile(r'"[^"]*"|\S+')
+
+
+def _split_actions(text, known):
+    pieces = [p.strip() for p in re.split(r"[/,]", text)]
+    if pieces and all(p in known for p in pieces):
+        return pieces
+    return None
+
+
+def _label_actions(label, known):
+    if label.strip().lower() == "global":
+        return None
+    m = re.search(r"\(([^)]*)\)", label)
+    if m:
+        found = _split_actions(m.group(1), known)
+        if found is not None:
+            return found
+    return _split_actions(label, known)
+
+
+def _parse_flags(text):
+    text = re.sub(r"\([^)]*\)", " ", text)
+    tokens = _TOKEN_RE.findall(text)
+    flags = []
+    i = 0
+    alias = False
+    while i < len(tokens):
+        tok = tokens[i]
+        if tok == "|":
+            alias = bool(flags)
+        elif _FLAG_RE.match(tok):
+            if alias and flags:
+                flags[-1]["names"].append(tok)
+            else:
+                flags.append({"names": [tok], "takes_value": False, "choices": []})
+            alias = False
+            nxt = tokens[i + 1] if i + 1 < len(tokens) else ""
+            if nxt.startswith("<") or nxt.startswith('"<'):
+                flag = flags[-1]
+                flag["takes_value"] = True
+                if nxt.startswith("<") and nxt.endswith(">"):
+                    parts = nxt[1:-1].split("|")
+                    if len(parts) >= 2 and all(_CHOICE_RE.match(p) for p in parts):
+                        flag["choices"] = parts
+                i += 1
+        else:
+            alias = False
+        i += 1
+    return flags
+
+
 def parse_interface(block):
     lines = _normalise(block).split("\n")
     usage_line = None
@@ -99,19 +154,50 @@ def parse_interface(block):
             break
     actions = {}
     in_section = False
-    for line in lines:
+    rest_start = len(lines)
+    for idx, line in enumerate(lines):
         if not in_section:
             if line.startswith("Actions"):
                 in_section = True
             continue
         if not line.strip() or not line[0].isspace():
+            rest_start = idx
             break
         parsed = _parse_action_line(line)
         if parsed:
             actions[parsed[0]] = parsed[1]
     if not actions:
         return None
-    return {"usage_line": usage_line, "actions": actions, "groups": []}
+    groups = []
+    current = None
+    for line in lines[rest_start:]:
+        m = _GROUP_RE.match(line)
+        if m and "--" not in m.group(1):
+            label = m.group(1).strip()
+            current = {"label": label, "actions": _label_actions(label, actions), "_text": [m.group(2)]}
+            groups.append(current)
+        elif current is not None and line[:1].isspace() and line.strip().startswith("-"):
+            current["_text"].append(line)
+    for g in groups:
+        g["flags"] = _parse_flags("\n".join(g.pop("_text")))
+    return {"usage_line": usage_line, "actions": actions, "groups": groups}
+
+
+def flags_for(interface, action):
+    out = []
+    seen = set()
+    for g in interface["groups"]:
+        if g["actions"] is not None and action not in g["actions"]:
+            continue
+        for f in g["flags"]:
+            if f["names"][0] not in seen:
+                seen.add(f["names"][0])
+                out.append(f)
+    return out
+
+
+def all_flag_names(interface):
+    return {n for g in interface["groups"] for f in g["flags"] for n in f["names"]}
 
 
 def main(argv):
