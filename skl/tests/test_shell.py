@@ -1,4 +1,5 @@
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -57,6 +58,9 @@ class ShellTests(SklCase):
     def test_bash_has_no_bash4_features(self):
         for banned in ("mapfile", "readarray", "declare -A", ",,}", "^^}"):
             self.assertNotIn(banned, skl.BASH_COMPLETION)
+        for pattern in (r"\$\{[^}]*(,,|\^\^|,|\^)[^}]*\}", r"-A\b", r"&>>", r"\|&", r"coproc",
+                        r"\"\$\{[^\"}]*\$'"):
+            self.assertIsNone(re.search(pattern, skl.BASH_COMPLETION), pattern)
 
     @unittest.skipUnless(shutil.which("zsh"), "zsh not installed")
     def test_zsh_loads(self):
