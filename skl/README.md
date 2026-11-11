@@ -14,8 +14,10 @@ The script copies `skl` to `~/.local/bin` (set `SKL_BIN_DIR` to change that). Th
 
 ```
 source <(skl completion zsh)     # ~/.zshrc
-source <(skl completion bash)    # ~/.bashrc
+eval "$(skl completion bash)"    # ~/.bashrc
 ```
+
+zsh needs `autoload -U compinit && compinit` before its line. The bash line uses `eval` because `source <(...)` does nothing in bash 3.2 (stock macOS).
 
 ## Usage
 
@@ -29,7 +31,7 @@ skl notes add Hello --app         # open claude.ai/new?q=... in the browser
 skl doctor                        # check claude CLI, sign-in, store, roots
 ```
 
-Other commands: `show <skill> [--parsed]`, `remove <skill>`, `run <skill> ...` (for a skill named like a built-in). Bad input fails with exit code 2 and no model call, for example `skl notes list --bogus` prints `error: unknown flag '--bogus'`. `--help` prints the skill's usage block.
+Other commands: `show <skill> [--parsed]`, `remove <skill>`, `run <skill> ...` (for a skill named like a built-in). Bad input fails with exit code 2 and no model call, for example `skl notes list --bogus` prints `error: unknown flag '--bogus'`. `--help` prints the skill's usage block. If a skill defines its own `--print` or `--app`, the skill's flag wins and `skl`'s own are `--skl-print` and `--skl-app`.
 
 ## How it finds skills
 

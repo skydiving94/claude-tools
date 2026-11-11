@@ -15,7 +15,7 @@ chmod 755 "$bin_dir/skl"
 
 echo "installed $bin_dir/skl"
 echo "Add to ~/.zshrc:   source <(skl completion zsh)"
-echo "Add to ~/.bashrc:  source <(skl completion bash)"
+echo 'Add to ~/.bashrc:  eval "$(skl completion bash)"'
 echo "Then run: skl sync"
 
 case ":$PATH:" in

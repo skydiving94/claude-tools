@@ -13,6 +13,8 @@ class InstallTest(SklCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertTrue(os.access(dest / "skl", os.X_OK))
         self.assertIn("source <(skl completion zsh)", r.stdout)
+        self.assertIn('Add to ~/.bashrc:  eval "$(skl completion bash)"', r.stdout)
+        self.assertNotIn("source <(skl completion bash)", r.stdout)
         self.assertIn("is not on your PATH", r.stdout)
         r = subprocess.run([sys.executable, str(dest / "skl"), "list"], env=self.env, capture_output=True, text=True)
         self.assertIn("no skills indexed", r.stdout)

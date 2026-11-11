@@ -38,7 +38,7 @@ class ShellTests(SklCase):
         self.assertEqual(self.run_cli("completion").returncode, 2)
 
     def test_bash_completes(self):
-        script = ('source <(skl completion bash); COMP_WORDS=(skl notes ""); COMP_CWORD=2; _skl_complete; '
+        script = ('eval "$(skl completion bash)"; COMP_WORDS=(skl notes ""); COMP_CWORD=2; _skl_complete; '
                   'printf "%s\\n" "${COMPREPLY[@]}"; COMP_WORDS=(skl no); COMP_CWORD=1; _skl_complete; '
                   'printf "%s\\n" "${COMPREPLY[@]}"')
         r = self.bash(script)
@@ -47,7 +47,7 @@ class ShellTests(SklCase):
 
     def test_bash_no_word_splitting(self):
         # Descriptions contain spaces; candidates must stay whole, one per entry.
-        script = ('source <(skl completion bash); COMP_WORDS=(skl notes ""); COMP_CWORD=2; _skl_complete; '
+        script = ('eval "$(skl completion bash)"; COMP_WORDS=(skl notes ""); COMP_CWORD=2; _skl_complete; '
                   'echo "${#COMPREPLY[@]}"; printf "<%s>\\n" "${COMPREPLY[@]}"')
         r = self.bash(script)
         self.assertEqual(r.stdout.split("\n")[:5], ["3", "<add>", "<show>", "<list>", ""])
