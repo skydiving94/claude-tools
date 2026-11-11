@@ -6,8 +6,10 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
+import urllib.parse
 import zipfile
 import zlib
 from pathlib import Path
@@ -541,16 +543,127 @@ def cmd_remove(args):
     return 0
 
 
+_SAFE_ARG_RE = re.compile(r"^[A-Za-z0-9_@%+=:,./-]+$")
+
+
+def quote_arg(arg):
+    if _SAFE_ARG_RE.match(arg):
+        return arg
+    return '"%s"' % arg.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def build_command(name, args):
+    return "/" + name + "".join(" " + quote_arg(a) for a in args)
+
+
+def split_mode(entry, args):
+    interface = entry.get("interface")
+    taken = set(all_flag_names(interface)) if interface else set()
+    flags = {}
+    rest = []
+    for a in args:
+        for mode in ("print", "app"):
+            plain, prefixed = "--" + mode, "--skl-" + mode
+            if a == prefixed or (a == plain and plain not in taken):
+                flags[mode] = True
+                break
+        else:
+            rest.append(a)
+    if len(flags) == 2:
+        raise UsageError("choose one of --print and --app")
+    return (next(iter(flags)) if flags else "terminal"), rest
+
+
+def app_url(command):
+    return "https://claude.ai/new?q=" + urllib.parse.quote(command, safe="")
+
+
+def cmd_run(args):
+    if not args:
+        raise UsageError("usage: skl run <skill> [args...]")
+    entry = get_entry(load_index(), args[0])
+    mode, rest = split_mode(entry, args[1:])
+    if "--help" in rest or "-h" in rest:
+        sys.stdout.write(entry["usage_block"])
+        if not entry["usage_block"].endswith("\n"):
+            sys.stdout.write("\n")
+        return 0
+    try:
+        validate(entry, rest)
+    except UsageError as e:
+        sys.stderr.write("error: %s\n" % e)
+        if e.usage_line:
+            sys.stderr.write("usage: %s\n" % e.usage_line)
+        return 2
+    command = build_command(entry["name"], rest)
+    if mode == "app":
+        url = app_url(command)
+        sys.stderr.write("opening %s\n" % url)
+        opener = "open" if sys.platform == "darwin" else "xdg-open"
+        if shutil.which(opener):
+            subprocess.call([opener, url])
+        else:
+            _out(url)
+        return 0
+    if not shutil.which("claude"):
+        sys.stderr.write("error: claude CLI not found, install Claude Code or use --app\n")
+        return 127
+    sys.stdout.flush()
+    sys.stderr.flush()
+    if mode == "print":
+        return subprocess.call(["claude", "-p", command])
+    return subprocess.call(["claude", command])
+
+
+def cmd_doctor(args):
+    if args:
+        raise UsageError("doctor takes no arguments")
+    claude = shutil.which("claude")
+    _out("claude: %s" % (claude or "not found"))
+    version = "unknown"
+    signin = "not confirmed (run `claude` once to sign in)"
+    if claude:
+        try:
+            r = subprocess.run(["claude", "--version"], capture_output=True, text=True, timeout=10)
+            lines = r.stdout.strip().splitlines()
+            if lines:
+                version = lines[0]
+        except (OSError, subprocess.SubprocessError, ValueError):
+            pass
+        try:
+            r = subprocess.run(["claude", "auth", "status"], capture_output=True, timeout=10)
+            if r.returncode == 0:
+                signin = "ok"
+        except (OSError, subprocess.SubprocessError):
+            pass
+    _out("version: %s" % version)
+    _out("sign-in: %s" % signin)
+    _out("store: %s" % store_dir())
+    skills = load_index()["skills"]
+    passthrough = sum(1 for e in skills.values() if e.get("interface") is None)
+    _out("skills: %d indexed (%d pass-through)" % (len(skills), passthrough))
+    roots = scan_roots(os.getcwd())
+    if roots:
+        _out("roots:")
+        for r in roots:
+            _out("  %s" % r)
+    else:
+        _out("roots: none found")
+    return 0 if claude else 1
+
+
 _COMMANDS = {"sync": cmd_sync, "import": cmd_import, "list": cmd_list,
-             "show": cmd_show, "remove": cmd_remove}
+             "show": cmd_show, "remove": cmd_remove, "doctor": cmd_doctor, "run": cmd_run}
 
 
 def main(argv):
     try:
         if argv and argv[0] in _COMMANDS:
             return _COMMANDS[argv[0]](argv[1:])
-        sys.stderr.write("error: unknown command\n")
-        return 2
+        if not argv or argv[0] in _BUILTINS or argv[0] == "__complete":
+            sys.stderr.write("error: unknown command\n")
+            return 2
+        return cmd_run(argv)
     except UsageError as e:
         sys.stderr.write("error: %s\n" % e)
         return 2
