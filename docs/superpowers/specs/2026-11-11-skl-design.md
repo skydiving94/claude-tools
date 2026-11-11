@@ -18,10 +18,11 @@ claude-tools/
   LICENSE                   MIT
   skl/
     README.md               install, usage, limits
-    skl                     the CLI, one Python 3 file, standard library only
+    skl                     development launcher that runs sklcli from a checkout
+    sklcli/                 the CLI as a Python 3 package, standard library only
     completions/skl.bash
     completions/_skl        zsh
-    install.sh              copies skl to ~/.local/bin and prints the profile line
+    install.sh              builds sklcli into one executable file in ~/.local/bin and prints the profile line
     tests/                  unittest, fixtures under tests/fixtures/
   docs/superpowers/specs/   this file
 ```
@@ -36,12 +37,12 @@ skl import <path>              add a .skill archive, a SKILL.md, or a skill fold
 skl list                       indexed skills, one line each
 skl show <skill> [--parsed]    print the usage block verbatim; --parsed prints what skl understood
 skl remove <skill>             drop an imported skill from the store
-skl doctor                     check claude CLI, sign-in, store, and index
+skl doctor                     check claude CLI, sign-in, clipboard tool, store, and index
 skl completion zsh|bash        print the completion script
 skl help [<command>]           the command list, or usage and description of one command
 skl --help                     same as `skl help`; so does plain `skl`
 skl --version                  print `skl <version>`
-skl <skill> <action> [<target>] [options] [--print | --app]
+skl <skill> <action> [<target>] [options] [--copy | --run | --print | --app]
 ```
 
 `skl <skill> ...` is the run form. A skill named like a built-in command is reached with `skl run <skill> ...`.
@@ -78,7 +79,7 @@ If the block cannot be parsed into at least one action, the skill is still index
 Before any model call, `skl` checks the input against the index and mirrors the skill contract:
 
 - `--help` or `-h` anywhere: print the usage block verbatim, exit 0.
-- Missing action, unknown action, missing required target, unknown flag, flag not valid for the action, or a value-taking flag without a value: print `error: <what is wrong>` and the usage line to stderr, exit 2.
+- Missing action, unknown action, missing required target, unknown flag, flag not valid for the action, or a value-taking flag without a value (the next word is missing or is one of the skill's own flags), or a value outside a flag's `<a|b>` choices: print `error: <what is wrong>` and the usage line to stderr, exit 2.
 
 Requirements stated only in prose, such as "`duplicate` also requires `--as`", are not checked locally. The skill itself still enforces them.
 
@@ -86,11 +87,12 @@ Requirements stated only in prose, such as "`duplicate` also requires `--as`", a
 
 The command sent to Claude is `/<skill> <args>` with the user's arguments re-quoted so values with spaces survive.
 
-- Default: `claude "/<skill> <args>"`, an interactive session in the terminal with the command already submitted. `skl` replaces itself with `claude` (exec), so the terminal belongs to `claude` and Ctrl-C reaches it directly.
+- `--copy` (the default): put the command on the clipboard, with `pbcopy` (macOS) or `wl-copy`, `xclip` or `xsel` (Linux), the first one found on PATH. The tool is run directly, not through a shell, and gets the text on stdin with no trailing newline. A tool that fails is skipped and the next is tried. If none is found or all fail, the command is printed to stdout, a note goes to stderr, and the exit code is 0. The copied text is `/<skill> <action>` followed by one line per target and per flag (a flag keeps its value on its line), every line but the last ending in ` \`. `skl` prints `copied to clipboard (<tool>): <one-line command>` to stderr.
+- `--run`: `claude "/<skill> <args>"`, an interactive session in the terminal with the command already submitted (the default before `--copy` existed). `skl` replaces itself with `claude` (exec), so the terminal belongs to `claude` and Ctrl-C reaches it directly.
 - `--print`: `claude -p "/<skill> <args>"`, non-interactive, output to stdout. Also an exec, so the exit code passes through unchanged.
 - `--app`: open `https://claude.ai/new?q=<url-encoded command>` with `open` (macOS) or `xdg-open` (Linux). The user presses send. If neither opener exists, print the URL.
 
-`--print` and `--app` are `skl` flags and are stripped before validation. A skill that defines its own flag with either name wins; the `skl` flag is then given as `--skl-print` or `--skl-app`.
+Giving more than one mode flag, including the same one twice, is an error (exit 2). The mode flags are `skl` flags and are stripped before validation. A skill that defines its own flag with any of these names wins; the `skl` flag is then given as `--skl-copy`, `--skl-run`, `--skl-print` or `--skl-app`.
 
 `skl` has no login. The terminal modes use whichever account the `claude` CLI is signed in to. `--app` uses whichever account the browser is signed in to, and the skill must exist in that account.
 
@@ -102,13 +104,13 @@ The completion files are thin. They call `skl __complete -- <words so far>` and 
 
 - Word 1: built-in commands and skill names.
 - Word 2 of a skill: its actions.
-- Later words: flags valid for the chosen action that are not already present, plus `--print` and `--app`. After a flag with choices, the choices. After a value-taking flag without choices, nothing (the shell falls back to file names).
+- Later words: flags valid for the chosen action that are not already present, plus the mode flags (none once one is already on the line). After a flag with choices, the choices. After a value-taking flag without choices, nothing (the shell falls back to file names).
 
 zsh shows action descriptions next to candidates. bash shows names only. bash completion works with bash 3.2.
 
 ## Errors
 
-- `claude` not on PATH: run modes other than `--app` exit 127 with an install hint. `sync`, `list`, `show`, and completion still work.
+- `claude` not on PATH: `--run` and `--print` exit 127 with an install hint. `--copy` and `--app` do not need it. `sync`, `list`, `show`, and completion still work.
 - Missing or corrupt `index.json`: commands say to run `skl sync`; completion prints nothing.
 - Unknown skill: `error:` plus the closest indexed names, exit 2. No guessing.
 
@@ -120,7 +122,7 @@ zsh shows action descriptions next to candidates. bash shows names only. bash co
 - Validation: each error case and `--help`.
 - Completion: candidates at each position via `__complete`.
 - Sync and import: temporary directories, including a zip with a path-escaping member.
-- Run: the built command line for each mode, with `claude` and the opener replaced by a stub on PATH.
+- Run: the built command line for each mode, with `claude`, the opener and the clipboard tools replaced by stubs on a PATH that holds nothing else, so no test can touch the real clipboard.
 
 Both completion files are loaded in a real bash and zsh once as a smoke test.
 

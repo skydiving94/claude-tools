@@ -1,9 +1,9 @@
 import pathlib
 import re
 
-from helpers import SklCase, load_skl
-
-skl = load_skl()
+import sklcli
+from helpers import SklCase
+from sklcli.help import BUILTINS, COMMANDS_HELP
 
 
 class HelpTests(SklCase):
@@ -18,7 +18,7 @@ class HelpTests(SklCase):
             r = self.run_cli(flag)
             self.assertEqual(r.returncode, 0, r.stderr)
             self.assertRegex(r.stdout, r"^skl \d+\.\d+\.\d+\n$")
-            self.assertEqual(r.stdout, "skl " + skl.__version__ + "\n")
+            self.assertEqual(r.stdout, "skl " + sklcli.__version__ + "\n")
             self.assertEqual(r.stderr, "")
 
     def test_version_only_when_sole_argument(self):
@@ -38,20 +38,23 @@ class HelpTests(SklCase):
         self.assertEqual(len(set(outs)), 1)
         self.assertTrue(outs[0].startswith("skl 0.1.0 - "))
         self.assertEqual(outs[0].splitlines()[0],
-                         "skl %s - run command-style Claude skills from your shell" % skl.__version__)
+                         "skl %s - run command-style Claude skills from your shell" % sklcli.__version__)
 
     def test_help_lists_every_builtin(self):
         out = self.run_cli("--help").stdout
-        for name in skl._BUILTINS:
+        for name in BUILTINS:
             self.assertRegex(out, r"(?m)^  %s\b" % re.escape(name))
-        self.assertEqual([c[0] for c in skl._COMMANDS_HELP], list(skl._BUILTINS))
+        self.assertEqual([c[0] for c in COMMANDS_HELP], list(BUILTINS))
         self.assertIn("  help [<command>]        Show this help, or help for one command\n", out)
         self.assertIn("  show <skill> [--parsed] Print a skill's usage block\n", out)
 
     def test_help_sections(self):
         out = self.run_cli("--help").stdout
-        for part in ("Usage:\n  skl <command> [args]\n  skl <skill> <action> [<target>] [options] [--print | --app]\n",
-                     "Run options:\n  --print      Run non-interactively",
+        for part in ("Usage:\n  skl <command> [args]\n  skl <skill> <action> [<target>] [options] [--copy | --run | --print | --app]\n",
+                     "Run options (give at most one):\n  --copy       Copy the command to the clipboard (the default)\n"
+                     "  --run        Start an interactive claude session with the command\n"
+                     "  --print      Run non-interactively",
+                     "  --app        Open claude.ai in the browser",
                      "  --version    Show the version\n",
                      "Environment:\n  SKL_SKILL_PATH   Extra skill folders",
                      "Indexed skills:\n"):
@@ -77,7 +80,7 @@ class HelpTests(SklCase):
 
     # per-command help
     def test_each_builtin_help(self):
-        for name, usage, _s, _d in skl._COMMANDS_HELP:
+        for name, usage, _s, _d in COMMANDS_HELP:
             for args in ((name, "--help"), (name, "-h"), ("help", name)):
                 r = self.run_cli(*args)
                 self.assertEqual(r.returncode, 0, (args, r.stderr))
@@ -88,8 +91,8 @@ class HelpTests(SklCase):
     def test_show_and_run_extras(self):
         self.assertIn("--parsed", self.run_cli("show", "--help").stdout.split("\n\n", 1)[1])
         out = self.run_cli("run", "--help").stdout
-        self.assertIn("--print", out)
-        self.assertIn("--app", out)
+        for flag in ("--copy", "--run", "--print", "--app", "default"):
+            self.assertIn(flag, out)
 
     def test_sync_help_no_error(self):
         r = self.run_cli("sync", "--help")

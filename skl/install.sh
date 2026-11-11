@@ -9,8 +9,15 @@ fi
 src_dir=$(cd "$(dirname "$0")" && pwd)
 bin_dir=${SKL_BIN_DIR:-$HOME/.local/bin}
 
+# Build one executable file (a Python zipapp) from the sklcli package.
+stage=$(mktemp -d)
+trap 'rm -rf "$stage"' EXIT
+cp -R "$src_dir/sklcli" "$stage/sklcli"
+find "$stage" -name __pycache__ -type d -prune -exec rm -rf {} +
+printf 'import sys\n\nfrom sklcli.cli import main\n\nsys.exit(main(sys.argv[1:]))\n' > "$stage/__main__.py"
+
 mkdir -p "$bin_dir"
-cp "$src_dir/skl" "$bin_dir/skl"
+python3 -m zipapp "$stage" -p "/usr/bin/env python3" -o "$bin_dir/skl"
 chmod 755 "$bin_dir/skl"
 
 echo "installed $bin_dir/skl"

@@ -5,9 +5,8 @@ import subprocess
 import sys
 import unittest
 
-from helpers import SklCase, SKL_PATH, load_skl
-
-skl = load_skl()
+from helpers import SklCase, SKL_PATH
+from sklcli.completion.scripts import BASH_COMPLETION
 
 
 class ShellTests(SklCase):
@@ -57,10 +56,10 @@ class ShellTests(SklCase):
 
     def test_bash_has_no_bash4_features(self):
         for banned in ("mapfile", "readarray", "declare -A", ",,}", "^^}"):
-            self.assertNotIn(banned, skl.BASH_COMPLETION)
+            self.assertNotIn(banned, BASH_COMPLETION)
         for pattern in (r"\$\{[^}]*(,,|\^\^|,|\^)[^}]*\}", r"-A\b", r"&>>", r"\|&", r"coproc",
                         r"\"\$\{[^\"}]*\$'"):
-            self.assertIsNone(re.search(pattern, skl.BASH_COMPLETION), pattern)
+            self.assertIsNone(re.search(pattern, BASH_COMPLETION), pattern)
 
     @unittest.skipUnless(shutil.which("zsh"), "zsh not installed")
     def test_zsh_loads(self):

@@ -5,9 +5,9 @@ import sys
 import zipfile
 from pathlib import Path
 
-from helpers import FIXTURES, SKL_PATH, SklCase, load_skl
-
-skl = load_skl()
+from helpers import FIXTURES, SKL_PATH, SklCase
+from sklcli.parsing.skillmd import extract_block
+from sklcli.store.paths import NAME_RE
 NOTES = (FIXTURES / "notes" / "SKILL.md").read_text()
 
 
@@ -29,7 +29,7 @@ class StoreTests(SklCase):
         self.assertEqual(self.run_cli("list").stdout.splitlines(),
             ["meal-prep-cookbook-recipe\tadd, update, duplicate, remove, list", "notes\tadd, show, list"])
         shown = self.run_cli("show", "notes").stdout
-        self.assertEqual(shown.rstrip("\n"), skl.extract_block(NOTES).rstrip("\n"))
+        self.assertEqual(shown.rstrip("\n"), extract_block(NOTES).rstrip("\n"))
         self.assertEqual(json.loads(self.run_cli("show", "notes", "--parsed").stdout)["usage_line"], "/notes <action> [<target>] [options]")
         self.assertTrue((Path(self.env["XDG_DATA_HOME"]) / "skl" / "skills" / "notes" / "SKILL.md").is_file())
 
@@ -142,9 +142,9 @@ class StoreTests(SklCase):
 
     def test_name_regex(self):
         for bad in ("a\n", "a b", "../x", "a/b", "a:b"):
-            self.assertIsNone(skl._NAME_RE.fullmatch(bad), bad)
+            self.assertIsNone(NAME_RE.fullmatch(bad), bad)
         for good in ("notes", "a.b-c_d", "A1"):
-            self.assertIsNotNone(skl._NAME_RE.fullmatch(good), good)
+            self.assertIsNotNone(NAME_RE.fullmatch(good), good)
 
 
 class BoundedSyncTests(SklCase):

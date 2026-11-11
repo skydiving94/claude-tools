@@ -1,8 +1,8 @@
 import pathlib
 
-from helpers import SklCase, load_skl, FIXTURES
-
-skl = load_skl()
+from helpers import SklCase, FIXTURES
+from sklcli.completion.engine import complete
+from sklcli.store.index import load_index
 
 
 class CompleteTests(SklCase):
@@ -19,10 +19,10 @@ class CompleteTests(SklCase):
         self.addCleanup(
             lambda: os.environ.__setitem__("XDG_DATA_HOME", old)
             if old is not None else os.environ.pop("XDG_DATA_HOME", None))
-        self.index = skl.load_index()
+        self.index = load_index()
 
     def c(self, *words):
-        return [x for x, _ in skl.complete(self.index, list(words))]
+        return [x for x, _ in complete(self.index, list(words))]
 
     def cli(self, *words):
         return self.run_cli("__complete", "--", *words)
@@ -44,14 +44,14 @@ class CompleteTests(SklCase):
         self.assertEqual(c("help", "sync", ""), [])
 
     def test_actions_with_descriptions(self):
-        self.assertEqual(skl.complete(self.index, ["notes", ""]),
+        self.assertEqual(complete(self.index, ["notes", ""]),
                          [("add", "Create a note"), ("show", "Show one note or the latest"), ("list", "List notes")])
         self.assertEqual(self.c("meal-prep-cookbook-recipe", "up"), ["update"])
 
     def test_flags(self):
         c = self.c
-        self.assertEqual(c("notes", "add", "t", "--"), ["--commit", "--help", "--tag", "--no-index", "--print", "--app"])
-        self.assertEqual(c("notes", "add", "t", "--commit", "--"), ["--help", "--tag", "--no-index", "--print", "--app"])
+        self.assertEqual(c("notes", "add", "t", "--"), ["--commit", "--help", "--tag", "--no-index", "--copy", "--run", "--print", "--app"])
+        self.assertEqual(c("notes", "add", "t", "--commit", "--"), ["--help", "--tag", "--no-index", "--copy", "--run", "--print", "--app"])
         self.assertEqual(c("meal-prep-cookbook-recipe", "update", "ossobuco", "--sw"), ["--swap"])
         self.assertEqual(c("notes", "list", "--format", ""), ["short", "long"])
         self.assertEqual(c("notes", "add", "t", "--tag", ""), [])
@@ -64,9 +64,15 @@ class CompleteTests(SklCase):
                 "usage_line": "u", "actions": {"go": {"targets": [], "description": ""}},
                 "groups": [{"label": "G", "actions": None, "flags": [
                     {"names": ["--print"], "takes_value": False, "choices": []}]}]}}}}
-        self.assertEqual([x for x, _ in skl.complete(idx, ["plain", ""])], ["--help", "--print", "--app"])
-        self.assertEqual([x for x, _ in skl.complete(idx, ["clash", "go", "--"])],
-                         ["--print", "--skl-print", "--app"])
+        self.assertEqual([x for x, _ in complete(idx, ["plain", ""])], ["--help", "--copy", "--run", "--print", "--app"])
+        self.assertEqual([x for x, _ in complete(idx, ["clash", "go", "--"])],
+                         ["--print", "--copy", "--run", "--skl-print", "--app"])
+
+    def test_no_second_mode_flag_is_offered(self):
+        for given in ("--copy", "--run", "--print", "--app", "--skl-run"):
+            self.assertEqual(self.c("notes", "add", "t", given, "--"),
+                             ["--commit", "--help", "--tag", "--no-index"], given)
+        self.assertEqual(self.c("notes", "add", "t", "--tag", "x", "--ru"), ["--run"])
 
     def test_cli_output_and_robustness(self):
         r = self.cli("notes", "a")
