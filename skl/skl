@@ -1,8 +1,15 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import difflib
+import json
+import os
 import re
+import shutil
 import sys
+import tempfile
+import zipfile
+from pathlib import Path
 
 
 class SklError(Exception):
@@ -15,6 +22,10 @@ class UsageError(SklError):
     def __init__(self, msg, usage_line=None):
         super().__init__(msg)
         self.usage_line = usage_line
+
+
+class NoInterfaceError(SklError):
+    """The file has no command interface block."""
 
 
 _HEADING_RE = re.compile(r"^##\s+Command interface", re.IGNORECASE)
@@ -200,9 +211,292 @@ def all_flag_names(interface):
     return {n for g in interface["groups"] for f in g["flags"] for n in f["names"]}
 
 
+_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+_BUILTINS = ("sync", "import", "list", "show", "remove", "doctor", "completion", "run")
+
+
+def store_dir():
+    base = os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local" / "share")
+    return Path(base) / "skl"
+
+
+def load_index():
+    path = store_dir() / "index.json"
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return {"version": 1, "skills": {}}
+    except (OSError, UnicodeDecodeError):
+        raise SklError("index is unreadable, run 'skl sync'")
+    try:
+        data = json.loads(text)
+    except ValueError:
+        raise SklError("index is unreadable, run 'skl sync'")
+    if not isinstance(data, dict) or not isinstance(data.get("skills"), dict):
+        raise SklError("index is unreadable, run 'skl sync'")
+    return data
+
+
+def save_index(index):
+    d = store_dir()
+    d.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=".index-", suffix=".tmp", dir=str(d))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(index, f, indent=2)
+            f.write("\n")
+        os.replace(tmp, str(d / "index.json"))
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def _skill_folder(name):
+    if not _NAME_RE.match(name):
+        raise SklError("unsafe skill name '%s'" % name)
+    return store_dir() / "skills" / name
+
+
+def _entry_from_bytes(data, fallback_name, source, source_path):
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        raise SklError("not valid UTF-8")
+    block = extract_block(text)
+    if block is None:
+        raise NoInterfaceError("no command interface block")
+    interface = parse_interface(block)
+    name = frontmatter_name(text)
+    if not name:
+        usage = (interface or {}).get("usage_line") or ""
+        first = usage.split()[0].lstrip("/") if usage.split() else ""
+        name = first or fallback_name
+    if not _NAME_RE.match(name or ""):
+        raise SklError("unsafe skill name '%s'" % name)
+    return {"name": name, "source": source, "source_path": str(source_path),
+            "usage_block": block, "interface": interface}
+
+
+def make_entry(skill_md_path, source):
+    path = Path(skill_md_path)
+    try:
+        data = path.read_bytes()
+    except OSError as e:
+        raise SklError("cannot read: %s" % (e.strerror or e))
+    return _entry_from_bytes(data, path.parent.name, source, path)
+
+
+def _write_store(name, data):
+    folder = _skill_folder(name)
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "SKILL.md").write_bytes(data)
+
+
+def _drop_store(name):
+    shutil.rmtree(str(_skill_folder(name)), ignore_errors=True)
+
+
+def scan_roots(cwd):
+    cwd = Path(cwd).resolve()
+    roots = [Path.home() / ".claude" / "skills"]
+    top = None
+    for d in [cwd] + list(cwd.parents):
+        if (d / ".git").exists():
+            top = d
+            break
+    if top is None:
+        chain = [cwd]
+    else:
+        chain = [cwd]
+        while chain[0] != top:
+            chain.insert(0, chain[0].parent)
+    roots.extend(d / ".claude" / "skills" for d in chain)
+    for p in os.environ.get("SKL_SKILL_PATH", "").split(os.pathsep):
+        if p:
+            roots.append(Path(p))
+    out = []
+    seen = set()
+    for r in roots:
+        if r.is_dir():
+            key = str(r.resolve())
+            if key not in seen:
+                seen.add(key)
+                out.append(r)
+    return out
+
+
+def get_entry(index, name):
+    skills = index["skills"]
+    if name in skills:
+        return skills[name]
+    msg = "unknown skill '%s'" % name
+    close = difflib.get_close_matches(name, list(skills), n=3)
+    if close:
+        msg += "\ndid you mean: %s" % ", ".join(close)
+    raise UsageError(msg)
+
+
+def _out(line):
+    sys.stdout.write(line + "\n")
+
+
+def _describe(entry):
+    if entry["interface"] is None:
+        return "(pass-through)"
+    return ", ".join(entry["interface"]["actions"])
+
+
+def cmd_sync(args):
+    if args:
+        raise UsageError("sync takes no arguments")
+    try:
+        index = load_index()
+    except SklError:
+        sys.stderr.write("note: index was unreadable, rebuilding it\n")
+        index = {"version": 1, "skills": {}}
+    skills = index["skills"]
+    seen = set()
+    for root in scan_roots(Path.cwd()):
+        for path in sorted(root.rglob("SKILL.md")):
+            try:
+                entry = make_entry(path, "sync")
+                data = path.read_bytes()
+            except NoInterfaceError:
+                continue
+            except SklError as e:
+                sys.stderr.write("skipped %s: %s\n" % (path, e))
+                continue
+            except OSError as e:
+                sys.stderr.write("skipped %s: %s\n" % (path, e.strerror or e))
+                continue
+            name = entry["name"]
+            old = skills.get(name)
+            if old is not None and (name in seen or old.get("source") == "import"):
+                _out("note: %s from %s replaces %s" % (name, path, old["source_path"]))
+            _write_store(name, data)
+            skills[name] = entry
+            seen.add(name)
+            n = len(entry["interface"]["actions"]) if entry["interface"] else None
+            _out("indexed %s (%s)" % (name, "pass-through" if n is None else "%d actions" % n))
+    for name in sorted(skills):
+        if skills[name].get("source") == "sync" and name not in seen:
+            del skills[name]
+            _drop_store(name)
+            _out("removed %s" % name)
+    save_index(index)
+    _out("%d skills indexed" % len(skills))
+    return 0
+
+
+def _read_skill_source(p):
+    """Return (bytes, fallback_name) for a SKILL.md, a folder, or a zip."""
+    if p.is_dir():
+        f = p / "SKILL.md"
+        if not f.is_file():
+            raise SklError("no SKILL.md in %s" % p)
+        return f.read_bytes(), p.resolve().name
+    if not p.exists():
+        raise SklError("no such file: %s" % p)
+    if p.suffix.lower() in (".skill", ".zip"):
+        try:
+            zf = zipfile.ZipFile(str(p))
+        except zipfile.BadZipFile:
+            raise SklError("not a valid zip file: %s" % p)
+        with zf:
+            names = zf.namelist()
+            member = None
+            if "SKILL.md" in names:
+                member = "SKILL.md"
+            else:
+                for n in names:
+                    parts = n.split("/")
+                    if len(parts) == 2 and parts[1] == "SKILL.md" and parts[0] not in ("", ".", ".."):
+                        member = n
+                        break
+            if member is None:
+                raise SklError("no SKILL.md in %s" % p)
+            fallback = member.split("/")[0] if "/" in member else p.stem
+            return zf.read(member), fallback
+    return p.read_bytes(), p.resolve().parent.name
+
+
+def cmd_import(args):
+    if len(args) != 1:
+        raise UsageError("usage: skl import <path>")
+    p = Path(args[0])
+    data, fallback = _read_skill_source(p)
+    entry = _entry_from_bytes(data, fallback, "import", p.resolve())
+    index = load_index()
+    _write_store(entry["name"], data)
+    index["skills"][entry["name"]] = entry
+    save_index(index)
+    _out("imported %s" % entry["name"])
+    return 0
+
+
+def cmd_list(args):
+    if args:
+        raise UsageError("list takes no arguments")
+    skills = load_index()["skills"]
+    if not skills:
+        _out("no skills indexed, run 'skl sync'")
+        return 0
+    for name in sorted(skills):
+        _out("%s\t%s" % (name, _describe(skills[name])))
+    return 0
+
+
+def cmd_show(args):
+    parsed = "--parsed" in args
+    rest = [a for a in args if a != "--parsed"]
+    if len(rest) != 1:
+        raise UsageError("usage: skl show <skill> [--parsed]")
+    entry = get_entry(load_index(), rest[0])
+    if parsed:
+        _out(json.dumps(entry["interface"], indent=2))
+    else:
+        sys.stdout.write(entry["usage_block"])
+        if not entry["usage_block"].endswith("\n"):
+            sys.stdout.write("\n")
+    return 0
+
+
+def cmd_remove(args):
+    if len(args) != 1:
+        raise UsageError("usage: skl remove <skill>")
+    index = load_index()
+    entry = get_entry(index, args[0])
+    name = entry["name"] if entry.get("name") in index["skills"] else args[0]
+    del index["skills"][name]
+    _drop_store(name)
+    save_index(index)
+    _out("removed %s" % name)
+    if entry.get("source") == "sync":
+        _out("note: 'skl sync' will add it back while the source exists")
+    return 0
+
+
+_COMMANDS = {"sync": cmd_sync, "import": cmd_import, "list": cmd_list,
+             "show": cmd_show, "remove": cmd_remove}
+
+
 def main(argv):
-    sys.stderr.write("error: unknown command\n")
-    return 2
+    try:
+        if argv and argv[0] in _COMMANDS:
+            return _COMMANDS[argv[0]](argv[1:])
+        sys.stderr.write("error: unknown command\n")
+        return 2
+    except UsageError as e:
+        sys.stderr.write("error: %s\n" % e)
+        return 2
+    except (SklError, OSError) as e:
+        if isinstance(e, OSError) and not isinstance(e, SklError):
+            e = e.strerror or e
+        sys.stderr.write("error: %s\n" % e)
+        return 1
 
 
 if __name__ == "__main__":
