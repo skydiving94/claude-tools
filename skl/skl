@@ -652,15 +652,86 @@ def cmd_doctor(args):
     return 0 if claude else 1
 
 
+def _filter(prefix, pairs):
+    return [(c, d) for c, d in pairs if c.startswith(prefix)]
+
+
+def _skill_line(entry, words):
+    cur = words[-1]
+    interface = entry.get("interface")
+    taken = all_flag_names(interface) if interface else set()
+    extras = []
+    for mode in ("print", "app"):
+        extras.append("--skl-" + mode if "--" + mode in taken else "--" + mode)
+    if len(words) == 1:
+        if interface is None:
+            return _filter(cur, [("--help", ""), ("--print", ""), ("--app", "")])
+        return _filter(cur, [(n, a.get("description", "")) for n, a in interface["actions"].items()])
+    if interface is None or words[0] not in interface["actions"]:
+        return []
+    action = words[0]
+    flags = flags_for(interface, action)
+    if len(words) >= 3:
+        prev = words[-2]
+        for f in flags:
+            if prev in f["names"] and f["takes_value"]:
+                return _filter(cur, [(ch, "") for ch in f.get("choices", [])])
+    earlier = set(words[1:-1])
+    out = [(f["names"][0], "") for f in flags if not earlier.intersection(f["names"])]
+    out += [(x, "") for x in extras if x not in earlier]
+    return _filter(cur, out)
+
+
+def complete(index, words):
+    skills = index.get("skills", {})
+    if not words:
+        return []
+    cur = words[-1]
+    if len(words) == 1:
+        return _filter(cur, [(b, "") for b in _BUILTINS] + [(n, "") for n in sorted(skills)])
+    first = words[0]
+    if first in ("show", "remove", "run") and len(words) == 2:
+        return _filter(cur, [(n, "") for n in sorted(skills)])
+    if first == "completion":
+        return _filter(cur, [("zsh", ""), ("bash", "")]) if len(words) == 2 else []
+    if first == "run":
+        first, words = words[1], words[1:]
+        if first not in skills:
+            return []
+        return _skill_line(skills[first], words[1:])
+    if first in _BUILTINS:
+        return []
+    if first in skills:
+        return _skill_line(skills[first], words[1:])
+    return []
+
+
+def cmd_complete(args):
+    try:
+        words = args[1:] if args and args[0] == "--" else args
+        try:
+            index = load_index()
+        except Exception:
+            index = {"skills": {}}
+        pairs = complete(index, list(words))
+        sys.stdout.write("".join(c + ("\t" + d if d else "") + "\n" for c, d in pairs))
+        sys.stdout.flush()
+    except Exception:
+        pass
+    return 0
+
+
 _COMMANDS = {"sync": cmd_sync, "import": cmd_import, "list": cmd_list,
              "show": cmd_show, "remove": cmd_remove, "doctor": cmd_doctor, "run": cmd_run}
 
 
 def main(argv):
     try:
+        if argv and argv[0] == "__complete":
+            return cmd_complete(argv[1:])
         if argv and argv[0] in _COMMANDS:
             return _COMMANDS[argv[0]](argv[1:])
-        if not argv or argv[0] in _BUILTINS or argv[0] == "__complete":
+        if not argv or argv[0] in _BUILTINS:
             sys.stderr.write("error: unknown command\n")
             return 2
         return cmd_run(argv)
