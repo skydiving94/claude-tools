@@ -1,0 +1,123 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import re
+import sys
+
+
+class SklError(Exception):
+    """General failure: exit 1, printed as 'error: <msg>'."""
+
+
+class UsageError(SklError):
+    """Usage failure: exit 2, optionally carrying a usage line."""
+
+    def __init__(self, msg, usage_line=None):
+        super().__init__(msg)
+        self.usage_line = usage_line
+
+
+_HEADING_RE = re.compile(r"^##\s+Command interface", re.IGNORECASE)
+_FENCE_RE = re.compile(r"^(```|~~~)")
+_ACTION_NAME_RE = re.compile(r"^[a-z][a-z0-9-]*$")
+
+
+def _normalise(text):
+    return text.replace("\r\n", "\n").replace("\r", "\n")
+
+
+def extract_block(skill_md):
+    lines = _normalise(skill_md).split("\n")
+    start = None
+    for i, line in enumerate(lines):
+        if _HEADING_RE.match(line):
+            start = i + 1
+            break
+    if start is None:
+        return None
+    opened = None
+    body = []
+    for line in lines[start:]:
+        if opened is None:
+            if line.startswith("## "):
+                return None
+            if _FENCE_RE.match(line):
+                opened = line[:3]
+        elif line.startswith(opened):
+            return "\n".join(body)
+        else:
+            body.append(line)
+    return None
+
+
+def frontmatter_name(skill_md):
+    lines = _normalise(skill_md).split("\n")
+    if not lines or lines[0].strip() != "---":
+        return None
+    for line in lines[1:]:
+        if line.strip() == "---":
+            return None
+        m = re.match(r"^name:\s*(.*?)\s*$", line)
+        if m:
+            value = m.group(1)
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+                value = value[1:-1]
+            return value or None
+    return None
+
+
+def _parse_action_line(line):
+    words = line.split()
+    if not words or not _ACTION_NAME_RE.match(words[0]):
+        return None
+    targets = []
+    i = 1
+    while i < len(words):
+        w = words[i]
+        m = re.match(r"^<([^<>]+)>$", w)
+        o = re.match(r"^\[<([^<>]+)>\]$", w)
+        if m:
+            targets.append({"name": m.group(1), "required": True})
+        elif o:
+            targets.append({"name": o.group(1), "required": False})
+        else:
+            break
+        i += 1
+    # description: remainder of the line after the consumed words
+    rest = line.strip()
+    for w in words[:i]:
+        rest = rest[len(w):].lstrip() if rest.startswith(w) else rest
+    return words[0], {"targets": targets, "description": rest.strip()}
+
+
+def parse_interface(block):
+    lines = _normalise(block).split("\n")
+    usage_line = None
+    for line in lines:
+        if line.startswith("/"):
+            usage_line = line.strip()
+            break
+    actions = {}
+    in_section = False
+    for line in lines:
+        if not in_section:
+            if line.startswith("Actions"):
+                in_section = True
+            continue
+        if not line.strip() or not line[0].isspace():
+            break
+        parsed = _parse_action_line(line)
+        if parsed:
+            actions[parsed[0]] = parsed[1]
+    if not actions:
+        return None
+    return {"usage_line": usage_line, "actions": actions, "groups": []}
+
+
+def main(argv):
+    sys.stderr.write("error: unknown command\n")
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
